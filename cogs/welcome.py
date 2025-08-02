@@ -1,0 +1,339 @@
+import asyncio
+import io
+import discord
+from discord.ext import commands
+from discord import app_commands
+import logging
+import os
+import json
+from datetime import datetime, timezone
+from .verification import VerificationView
+
+WELCOME_MESSAGE_FILE = 'welcome_message.json'
+USER_DATA_FILE = 'user_data.json'
+
+async def get_or_create_welcome_message(welcome_channel, embed, view):
+    """Fetch or create the persistent welcome message, updating if needed."""
+    # Try to load the message ID
+    try:
+        with open(WELCOME_MESSAGE_FILE, 'r') as f:
+            data = json.load(f)
+            msg_id = data.get('message_id')
+            channel_id = data.get('channel_id')
+    except Exception:
+        msg_id = None
+        channel_id = None
+    # If channel ID doesn't match, ignore old message
+    if channel_id != getattr(welcome_channel, 'id', None):
+        msg_id = None
+    # Try to fetch and edit the message
+    if msg_id:
+        try:
+            msg = await welcome_channel.fetch_message(msg_id)
+            await msg.edit(embed=embed, view=view)
+            return msg
+        except Exception:
+            pass  # Message missing or deleted
+    # Post a new message and save its ID
+    msg = await welcome_channel.send(embed=embed, view=view)
+    with open(WELCOME_MESSAGE_FILE, 'w') as f:
+        json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
+    return msg
+
+class Welcome(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.role_assignment_task = None
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Setup welcome channel when bot is ready (persistent message)"""
+        try:
+            guild_id = os.getenv('GUILD_ID')
+            guild = self.bot.get_guild(int(guild_id)) if guild_id and hasattr(self.bot, 'get_guild') else None
+            if not guild:
+                logging.error(f"Guild with ID {guild_id} not found")
+                return
+            welcome_channel_id = os.getenv('WELCOME_CHANNEL_ID')
+            if not welcome_channel_id:
+                logging.error("WELCOME_CHANNEL_ID is not set in environment variables")
+                return
+            welcome_channel = self.bot.get_channel(int(welcome_channel_id))
+            if not welcome_channel:
+                logging.error(f"Welcome channel with ID {welcome_channel_id} not found")
+                return
+            # Create new welcome embed
+            embed = discord.Embed(
+                title="👋 Welcome To The AJ Trading Academy!",
+                description=(
+                    "To maximize your free community access & the education inside, book your free onboarding call below.\n\n"
+                    "You'll speak to our senior trading success coach, who will show you how you can make the most out of your free membership and discover:\n\n"
+                    "• What you're currently doing right in your trading\n"
+                    "• What you're currently doing wrong in your trading\n"
+                    "• How can you can improve to hit your trading goals ASAP\n\n"
+                    "You will learn how you can take advantage of the free community and education to get on track to consistent market profits in just 60 minutes per day without hit-or-miss time-consuming strategies, risky trades, or losing thousands on failed challenges.\n\n"
+                    "(If you have already booked your onboarding call on the last page click the button below and you'll automatically gain access to the community)"
+                ),
+                color=0xFFFFFF
+            )
+            embed.set_footer(text="Join our community today!")
+            embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
+            # Use persistent message logic
+            msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
+            logging.info(f"Welcome message is now persistent: {msg.jump_url}")
+            
+            # Start role assignment loop
+            self.role_assignment_task = self.bot.loop.create_task(self.role_assignment_loop())
+        except Exception as e:
+            logging.error(f"Error in on_ready welcome setup: {e}")
+
+    @commands.Cog.listener()
+    async def on_member_join(self, member):
+        """Handle new member joins"""
+        try:
+            guild_id = int(os.getenv('GUILD_ID', 0))
+            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            
+            if not guild_id or not unverified_role_id:
+                logging.error("GUILD_ID or UNVERIFIED_ROLE_ID not set")
+                return
+            
+            guild = member.guild
+            if guild.id != guild_id:
+                return
+            
+            # Get the unverified role
+            unverified_role = guild.get_role(unverified_role_id)
+            if not unverified_role:
+                logging.error(f"Unverified role {unverified_role_id} not found")
+                return
+            
+            # Assign unverified role
+            await member.add_roles(unverified_role)
+            logging.info(f"Assigned unverified role to {member.display_name} ({member.id})")
+            
+            # Log to logs channel
+            if logs_channel_id:
+                logs_channel = guild.get_channel(logs_channel_id)
+                if logs_channel:
+                    embed = discord.Embed(
+                        title="👋 New Member Joined",
+                        description=f"**{member.mention}** has joined the server",
+                        color=0x00ff00,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.add_field(name="User ID", value=f"`{member.id}`", inline=True)
+                    embed.add_field(name="Account Created", value=f"<t:{int(member.created_at.timestamp())}:R>", inline=True)
+                    embed.add_field(name="Role Assigned", value=f"✅ Unverified Role", inline=True)
+                    embed.set_thumbnail(url=member.display_avatar.url)
+                    embed.set_footer(text=f"Member #{guild.member_count}")
+                    
+                    await logs_channel.send(embed=embed)
+            
+            # Record user data for role assignment
+            try:
+                with open(USER_DATA_FILE, 'r') as f:
+                    user_data = json.load(f)
+            except FileNotFoundError:
+                user_data = {}
+            
+            user_id = str(member.id)
+            current_time = datetime.now(timezone.utc).timestamp()
+            
+            user_data[user_id] = {
+                'joined_at': current_time,
+                'has_access': False,
+                'role_assigned': False,
+                'unverified_role_assigned': True
+            }
+            
+            with open(USER_DATA_FILE, 'w') as f:
+                json.dump(user_data, f, indent=2)
+                
+        except Exception as e:
+            logging.error(f"Error handling member join for {member.id}: {e}")
+
+    async def role_assignment_loop(self):
+        """Background task to assign member roles and remove unverified roles"""
+        while True:
+            try:
+                await self.check_and_assign_roles()
+                await asyncio.sleep(30)  # Check every 30 seconds
+            except Exception as e:
+                logging.error(f"Error in role assignment loop: {e}")
+                await asyncio.sleep(60)  # Wait longer on error
+
+    async def check_and_assign_roles(self):
+        """Check if any users need role assignment"""
+        try:
+            # Load user data
+            try:
+                with open(USER_DATA_FILE, 'r') as f:
+                    user_data = json.load(f)
+            except FileNotFoundError:
+                return
+            
+            current_time = datetime.now(timezone.utc).timestamp()
+            delay_seconds = int(os.getenv('ROLE_ASSIGNMENT_DELAY', 300))  # 5 minutes in seconds
+            
+            for user_id_str, data in user_data.items():
+                user_id = int(user_id_str)
+                
+                # Check if user needs member role (button clicked)
+                if not data.get('has_access', False) and not data.get('role_assigned', False):
+                    button_clicked_at = data.get('button_clicked_at', 0)
+                    if button_clicked_at and current_time - button_clicked_at >= delay_seconds:
+                        await self.assign_member_role(user_id)
+                        # Also remove unverified role if they have it
+                        if data.get('unverified_role_assigned', False):
+                            await self.remove_unverified_role(user_id)
+                
+                # Check if user needs member role (joined 5 minutes ago)
+                joined_at = data.get('joined_at', 0)
+                if joined_at and current_time - joined_at >= delay_seconds:
+                    if not data.get('has_access', False) and not data.get('role_assigned', False):
+                        await self.assign_member_role(user_id)
+                    
+                    # Remove unverified role
+                    if data.get('unverified_role_assigned', False):
+                        await self.remove_unverified_role(user_id)
+                    
+        except Exception as e:
+            logging.error(f"Error checking role assignments: {e}")
+
+    async def assign_member_role(self, user_id):
+        """Assign member role to user"""
+        try:
+            guild_id = int(os.getenv('GUILD_ID', 0))
+            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            
+            if not guild_id or not member_role_id:
+                logging.error("GUILD_ID or MEMBER_ROLE_ID not set")
+                return
+            
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                logging.error(f"Guild {guild_id} not found")
+                return
+            
+            member = guild.get_member(user_id)
+            if not member:
+                logging.error(f"Member {user_id} not found in guild")
+                return
+            
+            role = guild.get_role(member_role_id)
+            if not role:
+                logging.error(f"Role {member_role_id} not found")
+                return
+            
+            if role in member.roles:
+                logging.info(f"User {user_id} already has member role")
+                return
+            
+            await member.add_roles(role)
+            logging.info(f"Assigned member role to user {user_id}")
+            
+            # Log to logs channel
+            if logs_channel_id:
+                logs_channel = guild.get_channel(logs_channel_id)
+                if logs_channel:
+                    embed = discord.Embed(
+                        title="✅ Member Role Assigned",
+                        description=f"**{member.mention}** has been assigned the Member role",
+                        color=0x00ff00,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+                    embed.add_field(name="Role", value=f"✅ Member", inline=True)
+                    embed.set_thumbnail(url=member.display_avatar.url)
+                    
+                    await logs_channel.send(embed=embed)
+            
+            # Update user data
+            try:
+                with open(USER_DATA_FILE, 'r') as f:
+                    user_data = json.load(f)
+            except FileNotFoundError:
+                user_data = {}
+            
+            user_id_str = str(user_id)
+            if user_id_str in user_data:
+                user_data[user_id_str]['has_access'] = True
+                user_data[user_id_str]['role_assigned'] = True
+                
+                with open(USER_DATA_FILE, 'w') as f:
+                    json.dump(user_data, f, indent=2)
+            
+        except Exception as e:
+            logging.error(f"Error assigning member role to {user_id}: {e}")
+
+    async def remove_unverified_role(self, user_id):
+        """Remove unverified role from user"""
+        try:
+            guild_id = int(os.getenv('GUILD_ID', 0))
+            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            logs_channel_id = int(os.getenv('LOGS_CHANNEL_ID', 0))
+            
+            if not guild_id or not unverified_role_id:
+                logging.error("GUILD_ID or UNVERIFIED_ROLE_ID not set")
+                return
+            
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                logging.error(f"Guild {guild_id} not found")
+                return
+            
+            member = guild.get_member(user_id)
+            if not member:
+                logging.error(f"Member {user_id} not found in guild")
+                return
+            
+            role = guild.get_role(unverified_role_id)
+            if not role:
+                logging.error(f"Role {unverified_role_id} not found")
+                return
+            
+            if role not in member.roles:
+                logging.info(f"User {user_id} doesn't have unverified role")
+                return
+            
+            await member.remove_roles(role)
+            logging.info(f"Removed unverified role from user {user_id}")
+            
+            # Log to logs channel
+            if logs_channel_id:
+                logs_channel = guild.get_channel(logs_channel_id)
+                if logs_channel:
+                    embed = discord.Embed(
+                        title="🔓 Unverified Role Removed",
+                        description=f"**{member.mention}** has had their Unverified role removed",
+                        color=0xffa500,
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+                    embed.add_field(name="Role Removed", value=f"🔓 Unverified", inline=True)
+                    embed.set_thumbnail(url=member.display_avatar.url)
+                    
+                    await logs_channel.send(embed=embed)
+            
+            # Update user data
+            try:
+                with open(USER_DATA_FILE, 'r') as f:
+                    user_data = json.load(f)
+            except FileNotFoundError:
+                user_data = {}
+            
+            user_id_str = str(user_id)
+            if user_id_str in user_data:
+                user_data[user_id_str]['unverified_role_assigned'] = False
+                
+                with open(USER_DATA_FILE, 'w') as f:
+                    json.dump(user_data, f, indent=2)
+            
+        except Exception as e:
+            logging.error(f"Error removing unverified role from {user_id}: {e}")
+
+async def setup(bot):
+    await bot.add_cog(Welcome(bot))

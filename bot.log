@@ -1,0 +1,27 @@
+22:12:24 | ERROR    | root            | Failed to load commands: Extension 'commands' raised an error: ModuleNotFoundError: No module named 'commands.setup'
+22:24:14 | ERROR    | root            | Failed to load commands: Extension 'commands' raised an error: TypeError: autocomplete callback 'DailyChannelAccess.timezone_autocomplete' requires either 2 or 3 parameters to be passed
+22:39:02 | ERROR    | discord.app_commands.tree | Ignoring exception in command 'daily_access_channel'
+Traceback (most recent call last):
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\app_commands\commands.py", line 858, in _do_call
+    return await self._callback(interaction, **params)  # type: ignore
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "E:\AIdaptics-Client\Ayman Refers\Vlad-AJ simplified\commands\daily_access.py", line 192, in daily_access_channel
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\interactions.py", line 1004, in send_message
+    response = await adapter.create_interaction_response(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\webhook\async_.py", line 224, in request
+    raise NotFound(response, data)
+discord.errors.NotFound: 404 Not Found (error code: 10062): Unknown interaction
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\app_commands\tree.py", line 1310, in _call
+    await command._invoke_with_namespace(interaction, namespace)
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\app_commands\commands.py", line 883, in _invoke_with_namespace
+    return await self._do_call(interaction, transformed_values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ReNew\AppData\Local\Programs\Python\Python312\Lib\site-packages\discord\app_commands\commands.py", line 876, in _do_call
+    raise CommandInvokeError(self, e) from e
+discord.app_commands.errors.CommandInvokeError: Command 'daily_access_channel' raised an exception: NotFound: 404 Not Found (error code: 10062): Unknown interaction

@@ -44,6 +44,7 @@ class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.role_assignment_task = None
+        self.logged_members = set()  # Track members that have been logged
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -89,7 +90,7 @@ class Welcome(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        """Handle new member joins"""
+        """Handle new member joins with duplicate prevention"""
         try:
             guild_id = int(os.getenv('GUILD_ID', 0))
             unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
@@ -103,6 +104,11 @@ class Welcome(commands.Cog):
             if guild.id != guild_id:
                 return
             
+            # Check if this member has already been logged (duplicate prevention)
+            if member.id in self.logged_members:
+                logging.info(f"Duplicate member join event for {member.display_name} ({member.id}) - skipping log")
+                return
+            
             # Get the unverified role
             unverified_role = guild.get_role(unverified_role_id)
             if not unverified_role:
@@ -113,7 +119,7 @@ class Welcome(commands.Cog):
             await member.add_roles(unverified_role)
             logging.info(f"Assigned unverified role to {member.display_name} ({member.id})")
             
-            # Log to logs channel
+            # Log to logs channel (only once per member)
             if logs_channel_id:
                 logs_channel = guild.get_channel(logs_channel_id)
                 if logs_channel:
@@ -130,6 +136,10 @@ class Welcome(commands.Cog):
                     embed.set_footer(text=f"Member #{guild.member_count}")
                     
                     await logs_channel.send(embed=embed)
+                    
+                    # Mark this member as logged to prevent duplicates
+                    self.logged_members.add(member.id)
+                    logging.info(f"Logged member join for {member.display_name} ({member.id})")
             
             # Record user data for role assignment
             try:

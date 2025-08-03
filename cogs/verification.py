@@ -4,8 +4,10 @@ import json
 import logging
 from datetime import datetime, timezone
 import os
+import time
 
 USER_DATA_FILE = 'user_data.json'
+RATE_LIMIT_SECONDS = 10  # 10 second rate limit
 
 class OnboardingButton(ui.Button):
     def __init__(self):
@@ -14,9 +16,28 @@ class OnboardingButton(ui.Button):
             label="🔒 Book Your Onboarding Call",
             custom_id="book_onboarding"
         )
+        # In-memory cooldown tracking
+        self.button_cooldowns = {}
 
     async def callback(self, interaction: discord.Interaction):
-        """Handle button click"""
+        """Handle button click with rate limiting"""
+        user_id = str(interaction.user.id)
+        current_time = time.time()
+        
+        # Simple in-memory rate limit check
+        last_click = self.button_cooldowns.get(user_id, 0)
+        if current_time - last_click < RATE_LIMIT_SECONDS:
+            remaining_time = int(RATE_LIMIT_SECONDS - (current_time - last_click))
+            await interaction.response.send_message(
+                f"⏳ Please wait **{remaining_time} seconds** before trying again.",
+                ephemeral=True
+            )
+            logging.info(f"Rate limited user {user_id} - {remaining_time}s remaining")
+            return
+        
+        # Update cooldown immediately
+        self.button_cooldowns[user_id] = current_time
+        
         logging.info(f"Button callback triggered for user {interaction.user.id}")
         
         try:
@@ -26,9 +47,6 @@ class OnboardingButton(ui.Button):
                     user_data = json.load(f)
             except FileNotFoundError:
                 user_data = {}
-            
-            user_id = str(interaction.user.id)
-            current_time = datetime.now(timezone.utc).timestamp()
             
             # Check if user already has access
             if user_id in user_data and user_data[user_id].get('has_access', False):

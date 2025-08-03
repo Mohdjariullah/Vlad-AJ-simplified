@@ -5,7 +5,7 @@ import importlib
 # Commands package
 from .help import setup as help_setup
 from .refresh import setup as refresh_setup
-from .setup import setup as setup_setup
+from .daily_access import setup as daily_access_setup
 
 async def setup(bot: commands.Bot) -> None:
     """Add admin commands to the bot."""
@@ -18,5 +18,6 @@ async def setup(bot: commands.Bot) -> None:
     await refresh_setup(bot)
     logger.debug(msg.format("refresh"))
     
-    await setup_setup(bot)
-    logger.debug(msg.format("setup"))
+    await daily_access_setup(bot)
+    logger.debug(msg.format("daily_access"))
+    

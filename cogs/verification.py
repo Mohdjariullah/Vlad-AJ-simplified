@@ -96,7 +96,7 @@ class OnboardingButton(ui.Button):
             )
             
             # Add Calendly link
-            calendly_link = os.getenv('CALENDLY_LINK', 'https://calendly.com/ajtradingprofits-support/mastermind-call')
+            calendly_link = os.getenv('CALENDLY_LINK', 'https://ajtradingprofits.com/book-your-onboarding-call-today ')
             embed.add_field(
                 name="🔗 Book Your Call",
                 value=f"[Click here to book your free onboarding call]({calendly_link})",

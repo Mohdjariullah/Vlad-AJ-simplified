@@ -9,36 +9,11 @@ import json
 from datetime import datetime, timezone
 from .verification import VerificationView
 
+# Import the function from main.py to avoid duplication
+from main import get_or_create_welcome_message
+
 WELCOME_MESSAGE_FILE = 'welcome_message.json'
 USER_DATA_FILE = 'user_data.json'
-
-async def get_or_create_welcome_message(welcome_channel, embed, view):
-    """Fetch or create the persistent welcome message, updating if needed."""
-    # Try to load the message ID
-    try:
-        with open(WELCOME_MESSAGE_FILE, 'r') as f:
-            data = json.load(f)
-            msg_id = data.get('message_id')
-            channel_id = data.get('channel_id')
-    except Exception:
-        msg_id = None
-        channel_id = None
-    # If channel ID doesn't match, ignore old message
-    if channel_id != getattr(welcome_channel, 'id', None):
-        msg_id = None
-    # Try to fetch and edit the message
-    if msg_id:
-        try:
-            msg = await welcome_channel.fetch_message(msg_id)
-            await msg.edit(embed=embed, view=view)
-            return msg
-        except Exception:
-            pass  # Message missing or deleted
-    # Post a new message and save its ID
-    msg = await welcome_channel.send(embed=embed, view=view)
-    with open(WELCOME_MESSAGE_FILE, 'w') as f:
-        json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
-    return msg
 
 class Welcome(commands.Cog):
     def __init__(self, bot):
@@ -65,7 +40,7 @@ class Welcome(commands.Cog):
                 return
             # Create new welcome embed
             embed = discord.Embed(
-                title="👋 Welcome To The AJ Trading Academy!",
+                title="**__👋 WELCOME TO THE AJ TRADING ACADEMY!__**",
                 description=(
                     "To maximize your free community access & the education inside, book your free onboarding call below.\n\n"
                     "You'll speak to our senior trading success coach, who will show you how you can make the most out of your free membership and discover:\n\n"
@@ -77,7 +52,7 @@ class Welcome(commands.Cog):
                 ),
                 color=0xFFFFFF
             )
-            embed.set_footer(text="Join our community today!")
+            embed.set_footer(text="Book Your Onboarding Call Today!")
             embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
             # Use persistent message logic
             msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())

@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from datetime import datetime
 import os
+import logging
 from cogs.verification import VerificationView
 
 async def setup(bot):
@@ -32,7 +33,7 @@ async def setup(bot):
         
         # Create welcome embed
         embed = discord.Embed(
-            title="👋 Welcome To The AJ Trading Academy!",
+            title="**__👋 WELCOME TO THE AJ TRADING ACADEMY!__**",
             description=(
                 "To maximize your free community access & the education inside, book your free onboarding call below.\n\n"
                 "You'll speak to our senior trading success coach, who will show you how you can make the most out of your free membership and discover:\n\n"
@@ -44,10 +45,13 @@ async def setup(bot):
             ),
             color=0xFFFFFF
         )
-        embed.set_footer(text="Join our community today!")
+        embed.set_footer(text="Book Your Onboarding Call Today!")
         embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
         
         # Use VerificationView
-        msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
-        
-        await interaction.response.send_message(f"✅ Welcome message refreshed! {msg.jump_url}", ephemeral=True) 
+        try:
+            msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
+            await interaction.response.send_message(f"✅ Welcome message refreshed! {msg.jump_url}", ephemeral=True)
+        except Exception as e:
+            logging.error(f"Error refreshing welcome message: {e}")
+            await interaction.response.send_message("❌ Failed to refresh welcome message. Check logs for details.", ephemeral=True) 

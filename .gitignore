@@ -6,6 +6,8 @@
 # Data files
 welcome_data.json
 user_data.json
+daily_channel_schedules.json
+bot.log
 
 # Python
 __pycache__/

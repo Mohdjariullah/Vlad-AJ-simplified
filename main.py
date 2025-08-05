@@ -51,13 +51,18 @@ async def get_or_create_welcome_message(welcome_channel, embed, view):
             msg = await welcome_channel.fetch_message(msg_id)
             await msg.edit(embed=embed, view=view)
             return msg
-        except Exception:
+        except Exception as e:
+            logging.warning(f"Failed to fetch/edit message {msg_id}: {e}")
             pass  # Message missing or deleted
     # Post a new message and save its ID
-    msg = await welcome_channel.send(embed=embed, view=view)
-    with open('welcome_message.json', 'w') as f:
-        json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
-    return msg
+    try:
+        msg = await welcome_channel.send(embed=embed, view=view)
+        with open('welcome_message.json', 'w') as f:
+            json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
+        return msg
+    except Exception as e:
+        logging.error(f"Failed to send welcome message: {e}")
+        raise
 
 def check_and_install_requirements():
     """Check and install required packages using modern importlib.metadata"""
@@ -211,10 +216,14 @@ class AIdapticsWhopGatekeeper(commands.Bot):
         error_id = f"ERR_{hash(str(error)) % 10000:04d}"
         
         if isinstance(error, discord.app_commands.MissingPermissions):
-            await interaction.response.send_message(
-                "❌ You don't have permission to use this command!", 
-                ephemeral=True
-            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ You don't have permission to use this command!", 
+                        ephemeral=True
+                    )
+            except:
+                pass
         else:
             logging.error(f"Slash command error [{error_id}]: {error}")
             
@@ -229,7 +238,8 @@ class AIdapticsWhopGatekeeper(commands.Bot):
                         f"❌ An error occurred. Error ID: `{error_id}`", 
                         ephemeral=True
                     )
-            except:
+            except Exception as e:
+                logging.error(f"Failed to send error response: {e}")
                 pass
 
 # Create bot instance

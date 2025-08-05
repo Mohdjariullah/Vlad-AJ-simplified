@@ -89,7 +89,7 @@ class OnboardingButton(ui.Button):
                 description=(
                     "**Free Onboarding Call - For strategic planning**\n\n"
                     "👉 **FREE ONBOARDING CALL** 👈\n\n"
-                    "After booking, return here and try again with the same email address.\n\n"
+                    "You will discover how you can take advantage of the free community and education to get on track to consistent market profits in just 60 minutes per day without hit-or-miss time-consuming strategies, risky trades, or losing thousands on failed challenges.\n\n"
                     "*(If you already booked a call, you'll receive access to the community in 5 minutes.)*"
                 ),
                 color=0x00ff00

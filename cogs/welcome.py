@@ -182,22 +182,42 @@ class Welcome(commands.Cog):
             current_time = datetime.now(timezone.utc).timestamp()
             delay_seconds = int(os.getenv('ROLE_ASSIGNMENT_DELAY', 300))  # 5 minutes in seconds
             
+            # Create a list of users to remove (can't modify dict while iterating)
+            users_to_remove = []
+            
             for user_id_str, data in user_data.items():
                 user_id = int(user_id_str)
+                
+                # Check if user is still in the guild
+                guild_id = int(os.getenv('GUILD_ID', 0))
+                guild = self.bot.get_guild(guild_id)
+                if not guild:
+                    continue
+                
+                member = guild.get_member(user_id)
+                if not member:
+                    # User left the server, mark for removal
+                    users_to_remove.append(user_id_str)
+                    logging.info(f"User {user_id} left the server, will remove from data")
+                    continue
                 
                 # Only assign member role if user clicked the button
                 button_clicked_at = data.get('button_clicked_at', 0)
                 if button_clicked_at and not data.get('has_access', False) and not data.get('role_assigned', False):
                     if current_time - button_clicked_at >= delay_seconds:
                         await self.assign_member_role(user_id)
-                        # Also remove unverified role if they have it
+                        # Remove unverified role when they get member role
                         await self.remove_unverified_role(user_id)
-                
-                # Remove unverified role for users who joined 5 minutes ago (regardless of button click)
-                joined_at = data.get('joined_at', 0)
-                if joined_at and current_time - joined_at >= delay_seconds:
-                    # Only remove unverified role, don't assign member role unless they clicked button
-                    await self.remove_unverified_role(user_id)
+            
+            # Remove users who left the server
+            for user_id_str in users_to_remove:
+                del user_data[user_id_str]
+                logging.info(f"Removed user {user_id_str} from data (left server)")
+            
+            # Save updated data if any users were removed
+            if users_to_remove:
+                with open(USER_DATA_FILE, 'w') as f:
+                    json.dump(user_data, f, indent=2)
                     
         except Exception as e:
             logging.error(f"Error checking role assignments: {e}")
@@ -220,7 +240,7 @@ class Welcome(commands.Cog):
             
             member = guild.get_member(user_id)
             if not member:
-                logging.error(f"Member {user_id} not found in guild")
+                logging.info(f"Member {user_id} not found in guild (likely left)")
                 return
             
             role = guild.get_role(member_role_id)
@@ -306,7 +326,7 @@ class Welcome(commands.Cog):
             
             member = guild.get_member(user_id)
             if not member:
-                logging.error(f"Member {user_id} not found in guild")
+                logging.info(f"Member {user_id} not found in guild (likely left)")
                 return
             
             role = guild.get_role(unverified_role_id)
@@ -387,12 +407,16 @@ class Welcome(commands.Cog):
             unverified_role = guild.get_role(unverified_role_id) if unverified_role_id else None
             
             updated = False
+            users_to_remove = []
             
             for user_id_str, data in user_data.items():
                 user_id = int(user_id_str)
                 member = guild.get_member(user_id)
                 
                 if not member:
+                    # User left the server, mark for removal
+                    users_to_remove.append(user_id_str)
+                    logging.info(f"User {user_id} left the server, will remove from sync data")
                     continue
                 
                 # Check if user has member role
@@ -416,6 +440,12 @@ class Welcome(commands.Cog):
                     data['button_clicked_at'] = 0
                     updated = True
                     logging.info(f"Reset button click data for user {user_id} - they have member role but no click recorded")
+            
+            # Remove users who left the server
+            for user_id_str in users_to_remove:
+                del user_data[user_id_str]
+                logging.info(f"Removed user {user_id_str} from sync data (left server)")
+                updated = True
             
             if updated:
                 with open(USER_DATA_FILE, 'w') as f:

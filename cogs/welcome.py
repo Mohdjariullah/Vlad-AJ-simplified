@@ -93,9 +93,20 @@ class Welcome(commands.Cog):
                 logging.error(f"Unverified role {unverified_role_id} not found")
                 return
             
+            # Remove member role first if they have it (in case they rejoined)
+            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+            if member_role_id:
+                member_role = guild.get_role(member_role_id)
+                if member_role and member_role in member.roles:
+                    await member.remove_roles(member_role)
+                    logging.info(f"Removed member role from {member.display_name} ({member.id}) - they rejoined")
+            
             # Assign unverified role
-            await member.add_roles(unverified_role)
-            logging.info(f"Assigned unverified role to {member.display_name} ({member.id})")
+            if unverified_role not in member.roles:
+                await member.add_roles(unverified_role)
+                logging.info(f"Assigned unverified role to {member.display_name} ({member.id})")
+            else:
+                logging.info(f"User {member.display_name} ({member.id}) already has unverified role")
             
             # Log to logs channel (only once per member)
             if logs_channel_id:
@@ -113,7 +124,12 @@ class Welcome(commands.Cog):
                     embed.set_thumbnail(url=member.display_avatar.url)
                     embed.set_footer(text=f"Member #{guild.member_count}")
                     
-                    await logs_channel.send(embed=embed)
+                    try:
+                        await logs_channel.send(embed=embed)
+                    except discord.Forbidden:
+                        logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
+                    except Exception as e:
+                        logging.error(f"Error sending log message: {e}")
                     
                     # Mark this member as logged to prevent duplicates
                     self.logged_members.add(member.id)
@@ -133,7 +149,8 @@ class Welcome(commands.Cog):
                 'joined_at': current_time,
                 'has_access': False,
                 'role_assigned': False,
-                'unverified_role_assigned': True
+                'unverified_role_assigned': True,
+                'button_clicked_at': 0  # Reset button click when they rejoin
             }
             
             with open(USER_DATA_FILE, 'w') as f:
@@ -246,7 +263,12 @@ class Welcome(commands.Cog):
                     embed.add_field(name="Role", value=f"✅ Member", inline=True)
                     embed.set_thumbnail(url=member.display_avatar.url)
                     
-                    await logs_channel.send(embed=embed)
+                    try:
+                        await logs_channel.send(embed=embed)
+                    except discord.Forbidden:
+                        logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
+                    except Exception as e:
+                        logging.error(f"Error sending log message: {e}")
             
             # Update user data
             try:
@@ -313,7 +335,12 @@ class Welcome(commands.Cog):
                     embed.add_field(name="Role Removed", value=f"🔓 Unverified", inline=True)
                     embed.set_thumbnail(url=member.display_avatar.url)
                     
-                    await logs_channel.send(embed=embed)
+                    try:
+                        await logs_channel.send(embed=embed)
+                    except discord.Forbidden:
+                        logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
+                    except Exception as e:
+                        logging.error(f"Error sending log message: {e}")
             
             # Update user data to mark unverified role as removed
             try:
@@ -383,6 +410,12 @@ class Welcome(commands.Cog):
                     data['unverified_role_assigned'] = has_unverified_role
                     updated = True
                     logging.info(f"Synced unverified role status for user {user_id}: {has_unverified_role}")
+                
+                # If user has member role but no button click recorded, reset their data
+                if has_member_role and not data.get('button_clicked_at', 0):
+                    data['button_clicked_at'] = 0
+                    updated = True
+                    logging.info(f"Reset button click data for user {user_id} - they have member role but no click recorded")
             
             if updated:
                 with open(USER_DATA_FILE, 'w') as f:

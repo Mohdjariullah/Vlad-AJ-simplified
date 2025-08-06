@@ -5,10 +5,10 @@ import logging
 import json
 
 async def setup(bot):
-    @bot.tree.command(name="removemember", description="Remove member role from a user")
+    @bot.tree.command(name="addunverified", description="Add unverified role to a user")
     @discord.app_commands.default_permissions(administrator=True)
-    async def remove_member_role(interaction: discord.Interaction, user: discord.Member):
-        """Remove member role from a user (admin only)"""
+    async def add_unverified_role(interaction: discord.Interaction, user: discord.Member):
+        """Add unverified role to a user (admin only)"""
         # SECURITY: Check authorization
         from main import is_authorized_guild_or_owner
         if not is_authorized_guild_or_owner(interaction):
@@ -23,21 +23,21 @@ async def setup(bot):
             return await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
         
         try:
-            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
-            if not member_role_id:
-                await interaction.response.send_message("❌ MEMBER_ROLE_ID not configured!", ephemeral=True)
+            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            if not unverified_role_id:
+                await interaction.response.send_message("❌ UNVERIFIED_ROLE_ID not configured!", ephemeral=True)
                 return
             
-            member_role = interaction.guild.get_role(member_role_id)
-            if not member_role:
-                await interaction.response.send_message("❌ Member role not found!", ephemeral=True)
+            unverified_role = interaction.guild.get_role(unverified_role_id)
+            if not unverified_role:
+                await interaction.response.send_message("❌ Unverified role not found!", ephemeral=True)
                 return
             
-            if member_role not in user.roles:
-                await interaction.response.send_message(f"❌ {user.mention} doesn't have the member role!", ephemeral=True)
+            if unverified_role in user.roles:
+                await interaction.response.send_message(f"❌ {user.mention} already has the unverified role!", ephemeral=True)
                 return
             
-            await user.remove_roles(member_role)
+            await user.add_roles(unverified_role)
             
             # Update user data
             try:
@@ -48,22 +48,30 @@ async def setup(bot):
             
             user_id_str = str(user.id)
             if user_id_str in user_data:
-                user_data[user_id_str]['has_access'] = False
-                user_data[user_id_str]['role_assigned'] = False
-                
-                with open('user_data.json', 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                user_data[user_id_str]['unverified_role_assigned'] = True
+            else:
+                # Create new user data if they don't exist
+                user_data[user_id_str] = {
+                    'joined_at': 0,
+                    'has_access': False,
+                    'role_assigned': False,
+                    'unverified_role_assigned': True,
+                    'button_clicked_at': 0
+                }
+            
+            with open('user_data.json', 'w') as f:
+                json.dump(user_data, f, indent=2)
             
             embed = discord.Embed(
-                title="🔓 Member Role Removed",
-                description=f"**{user.mention}** has had their Member role removed",
+                title="🔒 Unverified Role Added",
+                description=f"**{user.mention}** has been assigned the Unverified role",
                 color=discord.Color.orange(),
                 timestamp=discord.utils.utcnow()
             )
             embed.add_field(name="User ID", value=f"`{user.id}`", inline=True)
-            embed.add_field(name="Role Removed", value=f"🔓 Member", inline=True)
+            embed.add_field(name="Role Added", value=f"🔒 Unverified", inline=True)
             embed.set_thumbnail(url=user.display_avatar.url)
-            embed.set_footer(text=f"Removed by {interaction.user.name}")
+            embed.set_footer(text=f"Added by {interaction.user.name}")
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
             
@@ -80,5 +88,5 @@ async def setup(bot):
                         logging.error(f"Error sending log message: {e}")
                     
         except Exception as e:
-            logging.error(f"Error removing member role: {e}")
-            await interaction.response.send_message("❌ An error occurred while removing the role.", ephemeral=True) 
+            logging.error(f"Error adding unverified role: {e}")
+            await interaction.response.send_message("❌ An error occurred while adding the role.", ephemeral=True) 

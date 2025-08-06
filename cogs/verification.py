@@ -113,25 +113,34 @@ class OnboardingButton(ui.Button):
                 if guild:
                     logs_channel = guild.get_channel(logs_channel_id)
                     if logs_channel:
-                        embed = discord.Embed(
-                            title="🔒 Onboarding Button Clicked",
-                            description=f"**{interaction.user.mention}** clicked the onboarding button",
-                            color=0x0099ff,
-                            timestamp=datetime.now(timezone.utc)
-                        )
-                        embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
-                        embed.add_field(name="Action", value="🔒 Button Clicked", inline=True)
-                        embed.add_field(name="Has Unverified Role", value=f"{'✅ Yes' if has_unverified_role else '❌ No'}", inline=True)
-                        embed.set_thumbnail(url=interaction.user.display_avatar.url)
-                        
-                        await logs_channel.send(embed=embed)
+                        try:
+                            embed = discord.Embed(
+                                title="🔒 Onboarding Button Clicked",
+                                description=f"**{interaction.user.mention}** clicked the onboarding button",
+                                color=0x0099ff,
+                                timestamp=datetime.now(timezone.utc)
+                            )
+                            embed.add_field(name="User ID", value=f"`{user_id}`", inline=True)
+                            embed.add_field(name="Action", value="🔒 Button Clicked", inline=True)
+                            embed.add_field(name="Has Unverified Role", value=f"{'✅ Yes' if has_unverified_role else '❌ No'}", inline=True)
+                            embed.set_thumbnail(url=interaction.user.display_avatar.url)
+                            
+                            await logs_channel.send(embed=embed)
+                        except discord.Forbidden:
+                            logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
+                        except Exception as e:
+                            logging.error(f"Error sending log message: {e}")
             
         except Exception as e:
             logging.error(f"Error in button callback: {e}")
-            await interaction.response.send_message(
-                "❌ An error occurred. Please try again later.", 
-                ephemeral=True
-            )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ An error occurred. Please try again later.", 
+                        ephemeral=True
+                    )
+            except Exception as response_error:
+                logging.error(f"Error sending error response: {response_error}")
 
 class VerificationView(ui.View):
     def __init__(self):

@@ -60,6 +60,9 @@ class Welcome(commands.Cog):
             
             # Start role assignment loop
             self.role_assignment_task = self.bot.loop.create_task(self.role_assignment_loop())
+            
+            # Sync user data with actual Discord roles to prevent incorrect assignments
+            await self.sync_user_data_with_roles()
         except Exception as e:
             logging.error(f"Error in on_ready welcome setup: {e}")
 
@@ -165,24 +168,19 @@ class Welcome(commands.Cog):
             for user_id_str, data in user_data.items():
                 user_id = int(user_id_str)
                 
-                # Check if user needs member role (button clicked)
-                if not data.get('has_access', False) and not data.get('role_assigned', False):
-                    button_clicked_at = data.get('button_clicked_at', 0)
-                    if button_clicked_at and current_time - button_clicked_at >= delay_seconds:
+                # Only assign member role if user clicked the button
+                button_clicked_at = data.get('button_clicked_at', 0)
+                if button_clicked_at and not data.get('has_access', False) and not data.get('role_assigned', False):
+                    if current_time - button_clicked_at >= delay_seconds:
                         await self.assign_member_role(user_id)
                         # Also remove unverified role if they have it
-                        if data.get('unverified_role_assigned', False):
-                            await self.remove_unverified_role(user_id)
+                        await self.remove_unverified_role(user_id)
                 
-                # Check if user needs member role (joined 5 minutes ago)
+                # Remove unverified role for users who joined 5 minutes ago (regardless of button click)
                 joined_at = data.get('joined_at', 0)
                 if joined_at and current_time - joined_at >= delay_seconds:
-                    if not data.get('has_access', False) and not data.get('role_assigned', False):
-                        await self.assign_member_role(user_id)
-                    
-                    # Remove unverified role
-                    if data.get('unverified_role_assigned', False):
-                        await self.remove_unverified_role(user_id)
+                    # Only remove unverified role, don't assign member role unless they clicked button
+                    await self.remove_unverified_role(user_id)
                     
         except Exception as e:
             logging.error(f"Error checking role assignments: {e}")
@@ -215,6 +213,20 @@ class Welcome(commands.Cog):
             
             if role in member.roles:
                 logging.info(f"User {user_id} already has member role")
+                # Update user data to reflect they already have the role
+                try:
+                    with open(USER_DATA_FILE, 'r') as f:
+                        user_data = json.load(f)
+                except FileNotFoundError:
+                    user_data = {}
+                
+                user_id_str = str(user_id)
+                if user_id_str in user_data:
+                    user_data[user_id_str]['has_access'] = True
+                    user_data[user_id_str]['role_assigned'] = True
+                    
+                    with open(USER_DATA_FILE, 'w') as f:
+                        json.dump(user_data, f, indent=2)
                 return
             
             await member.add_roles(role)
@@ -303,7 +315,7 @@ class Welcome(commands.Cog):
                     
                     await logs_channel.send(embed=embed)
             
-            # Update user data
+            # Update user data to mark unverified role as removed
             try:
                 with open(USER_DATA_FILE, 'r') as f:
                     user_data = json.load(f)
@@ -319,6 +331,66 @@ class Welcome(commands.Cog):
             
         except Exception as e:
             logging.error(f"Error removing unverified role from {user_id}: {e}")
+
+    async def sync_user_data_with_roles(self):
+        """Sync user data with actual Discord roles to prevent incorrect assignments"""
+        try:
+            guild_id = int(os.getenv('GUILD_ID', 0))
+            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            
+            if not guild_id:
+                logging.error("GUILD_ID not set")
+                return
+            
+            guild = self.bot.get_guild(guild_id)
+            if not guild:
+                logging.error(f"Guild {guild_id} not found")
+                return
+            
+            # Load user data
+            try:
+                with open(USER_DATA_FILE, 'r') as f:
+                    user_data = json.load(f)
+            except FileNotFoundError:
+                logging.info("No user data file found, skipping sync")
+                return
+            
+            member_role = guild.get_role(member_role_id) if member_role_id else None
+            unverified_role = guild.get_role(unverified_role_id) if unverified_role_id else None
+            
+            updated = False
+            
+            for user_id_str, data in user_data.items():
+                user_id = int(user_id_str)
+                member = guild.get_member(user_id)
+                
+                if not member:
+                    continue
+                
+                # Check if user has member role
+                has_member_role = member_role and member_role in member.roles
+                has_unverified_role = unverified_role and unverified_role in member.roles
+                
+                # Update data to match actual Discord state
+                if data.get('has_access', False) != has_member_role:
+                    data['has_access'] = has_member_role
+                    data['role_assigned'] = has_member_role
+                    updated = True
+                    logging.info(f"Synced member role status for user {user_id}: {has_member_role}")
+                
+                if data.get('unverified_role_assigned', False) != has_unverified_role:
+                    data['unverified_role_assigned'] = has_unverified_role
+                    updated = True
+                    logging.info(f"Synced unverified role status for user {user_id}: {has_unverified_role}")
+            
+            if updated:
+                with open(USER_DATA_FILE, 'w') as f:
+                    json.dump(user_data, f, indent=2)
+                logging.info("User data synced with Discord roles")
+            
+        except Exception as e:
+            logging.error(f"Error syncing user data with roles: {e}")
 
 async def setup(bot):
     await bot.add_cog(Welcome(bot))

@@ -1,0 +1,3 @@
+02:31:02 | WARNING  | root            | Failed to fetch/edit message 1401606176378191962: 403 Forbidden (error code: 50005): Cannot edit a message authored by another user
+02:31:32 | ERROR    | root            | Error handling member join for 1243906793621422231: 403 Forbidden (error code: 50013): Missing Permissions
+02:31:34 | ERROR    | root            | Error assigning member role to 1243906793621422231: 403 Forbidden (error code: 50013): Missing Permissions

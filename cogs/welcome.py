@@ -20,6 +20,7 @@ class Welcome(commands.Cog):
         self.bot = bot
         self.role_assignment_task = None
         self.logged_members = set()  # Track members that have been logged
+        self.load_logged_members()
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -87,6 +88,10 @@ class Welcome(commands.Cog):
                 logging.info(f"Duplicate member join event for {member.display_name} ({member.id}) - skipping log")
                 return
             
+            # Mark as logged immediately to prevent duplicates
+            self.logged_members.add(member.id)
+            self.save_logged_members()
+            
             # Get the unverified role
             unverified_role = guild.get_role(unverified_role_id)
             if not unverified_role:
@@ -131,8 +136,6 @@ class Welcome(commands.Cog):
                     except Exception as e:
                         logging.error(f"Error sending log message: {e}")
                     
-                    # Mark this member as logged to prevent duplicates
-                    self.logged_members.add(member.id)
                     logging.info(f"Logged member join for {member.display_name} ({member.id})")
             
             # Record user data for role assignment
@@ -158,6 +161,30 @@ class Welcome(commands.Cog):
                 
         except Exception as e:
             logging.error(f"Error handling member join for {member.id}: {e}")
+            # Remove from logged_members if there was an error
+            self.logged_members.discard(member.id)
+
+    def load_logged_members(self):
+        """Load logged members from file"""
+        try:
+            with open('logged_members.json', 'r') as f:
+                data = json.load(f)
+                self.logged_members = set(data.get('logged_members', []))
+                logging.info(f"Loaded {len(self.logged_members)} logged members")
+        except FileNotFoundError:
+            self.logged_members = set()
+            logging.info("No logged members file found, starting fresh")
+        except Exception as e:
+            logging.error(f"Error loading logged members: {e}")
+            self.logged_members = set()
+
+    def save_logged_members(self):
+        """Save logged members to file"""
+        try:
+            with open('logged_members.json', 'w') as f:
+                json.dump({'logged_members': list(self.logged_members)}, f, indent=2)
+        except Exception as e:
+            logging.error(f"Error saving logged members: {e}")
 
     async def role_assignment_loop(self):
         """Background task to assign member roles and remove unverified roles"""

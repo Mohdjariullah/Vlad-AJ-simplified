@@ -48,26 +48,42 @@ class OnboardingButton(ui.Button):
             except FileNotFoundError:
                 user_data = {}
             
-            # Check if user already has access
-            if user_id in user_data and user_data[user_id].get('has_access', False):
+            # Check roles
+            member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
+            
+            has_member_role = False
+            has_unverified_role = False
+            
+            if interaction.guild:
+                if member_role_id:
+                    member_role = interaction.guild.get_role(member_role_id)
+                    if member_role and member_role in interaction.user.roles:
+                        has_member_role = True
+                
+                if unverified_role_id:
+                    unverified_role = interaction.guild.get_role(unverified_role_id)
+                    if unverified_role and unverified_role in interaction.user.roles:
+                        has_unverified_role = True
+            
+            # Check if user already has member role
+            if has_member_role:
                 embed = discord.Embed(
-                    title="✅ Already Have Access!",
-                    description="You already have access to the community. Welcome back!",
+                    title="✅ Already Verified!",
+                    description="You already have access to the community.",
                     color=0x00ff00
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
-                logging.info(f"User {user_id} already has access")
+                logging.info(f"User {user_id} already has member role")
                 return
             
-            # Check if user has unverified role
-            unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
-            has_unverified_role = False
-            
-            if unverified_role_id and interaction.guild:
+            # If user doesn't have unverified role, add it
+            if not has_unverified_role and unverified_role_id and interaction.guild:
                 unverified_role = interaction.guild.get_role(unverified_role_id)
-                if unverified_role and unverified_role in interaction.user.roles:
+                if unverified_role:
+                    await interaction.user.add_roles(unverified_role)
                     has_unverified_role = True
-                    logging.info(f"User {user_id} has unverified role")
+                    logging.info(f"Added unverified role to user {user_id}")
             
             # Record the button click
             user_data[user_id] = {

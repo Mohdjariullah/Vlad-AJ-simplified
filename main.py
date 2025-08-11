@@ -32,37 +32,27 @@ def is_authorized_guild_or_owner(interaction):
     return False
 
 async def get_or_create_welcome_message(welcome_channel, embed, view):
-    """Fetch or create the persistent welcome message, updating if needed."""
-    # Try to load the message ID
+    """Get message ID and edit it, or create new if needed."""
     try:
         with open('welcome_message.json', 'r') as f:
             data = json.load(f)
             msg_id = data.get('message_id')
-            channel_id = data.get('channel_id')
-    except Exception:
+    except:
         msg_id = None
-        channel_id = None
-    # If channel ID doesn't match, ignore old message
-    if channel_id != getattr(welcome_channel, 'id', None):
-        msg_id = None
-    # Try to fetch and edit the message
+    
     if msg_id:
         try:
             msg = await welcome_channel.fetch_message(msg_id)
             await msg.edit(embed=embed, view=view)
             return msg
-        except Exception as e:
-            logging.warning(f"Failed to fetch/edit message {msg_id}: {e}")
-            pass  # Message missing or deleted
-    # Post a new message and save its ID
-    try:
-        msg = await welcome_channel.send(embed=embed, view=view)
-        with open('welcome_message.json', 'w') as f:
-            json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
-        return msg
-    except Exception as e:
-        logging.error(f"Failed to send welcome message: {e}")
-        raise
+        except:
+            pass
+    
+    # Create new message only if needed
+    msg = await welcome_channel.send(embed=embed, view=view)
+    with open('welcome_message.json', 'w') as f:
+        json.dump({'message_id': msg.id, 'channel_id': welcome_channel.id}, f)
+    return msg
 
 def check_and_install_requirements():
     """Check and install required packages using modern importlib.metadata"""

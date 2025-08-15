@@ -157,6 +157,21 @@ class DailyChannelAccess(commands.Cog):
             
             except Exception as e:
                 logging.error(f"Error updating permissions for channel {channel_id}: {e}")
+                
+                # Report critical error to owners
+                try:
+                    await self.report_critical_error("Daily Access Error", f"Error updating permissions for channel {channel_id}: {e}")
+                except Exception as report_error:
+                    logging.error(f"Failed to report critical error: {report_error}")
+
+    async def report_critical_error(self, error_type, error_message):
+        """Report critical errors to owners via logs and DM"""
+        try:
+            # Import the error reporting function
+            from .verification import report_critical_error
+            await report_critical_error(error_type, error_message, self.bot)
+        except Exception as e:
+            logging.error(f"Error in daily access cog error reporting: {e}")
 
     @update_channel_permissions.before_loop
     async def before_update_permissions(self):

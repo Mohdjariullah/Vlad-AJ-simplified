@@ -10,20 +10,27 @@ async def setup(bot):
     @discord.app_commands.default_permissions(administrator=True)
     async def check_user(interaction: discord.Interaction, user: discord.Member):
         """Check user status and roles (admin only)"""
-        # SECURITY: Check authorization
-        from main import is_authorized_guild_or_owner
-        if not is_authorized_guild_or_owner(interaction):
-            return await interaction.response.send_message(
-                "❌ You are not authorized to use this command.", ephemeral=True
-            )
-        
-        # SECURITY: Block DMs and check admin permissions
-        if not interaction.guild:
-            return await interaction.response.send_message("❌ This command can only be used in a server!", ephemeral=True)
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
-        
         try:
+            # SECURITY: Check authorization
+            from main import is_authorized_guild_or_owner
+            if not is_authorized_guild_or_owner(interaction):
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ You are not authorized to use this command.", ephemeral=True
+                    )
+                return
+            
+            # SECURITY: Block DMs and check admin permissions
+            if not interaction.guild:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ This command can only be used in a server!", ephemeral=True)
+                return
+            
+            if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
+                return
+            
             member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
             unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
             
@@ -81,6 +88,32 @@ async def setup(bot):
             data_info.append(f"🎭 Role assigned: {user_info.get('role_assigned', False)}")
             data_info.append(f"🔒 Unverified role assigned: {user_info.get('unverified_role_assigned', False)}")
             
+            # Check button cooldown status
+            try:
+                from cogs.verification import COOLDOWN_FILE, RATE_LIMIT_SECONDS
+                import time
+                
+                try:
+                    with open(COOLDOWN_FILE, 'r') as f:
+                        cooldowns = json.load(f)
+                    last_click = cooldowns.get(str(user.id), 0)
+                    if last_click:
+                        current_time = time.time()
+                        time_since_click = current_time - last_click
+                        if time_since_click < RATE_LIMIT_SECONDS:
+                            remaining = int(RATE_LIMIT_SECONDS - time_since_click)
+                            data_info.append(f"⏳ Button cooldown: {remaining}s remaining")
+                        else:
+                            data_info.append("✅ Button cooldown: Expired")
+                    else:
+                        data_info.append("✅ Button cooldown: None")
+                except FileNotFoundError:
+                    data_info.append("✅ Button cooldown: No file")
+                except Exception as e:
+                    data_info.append(f"❓ Button cooldown: Error ({e})")
+            except ImportError:
+                data_info.append("❓ Button cooldown: Module not available")
+            
             embed.add_field(name="User Data", value="\n".join(data_info), inline=False)
             
             # Status Summary
@@ -99,8 +132,13 @@ async def setup(bot):
             embed.set_thumbnail(url=user.display_avatar.url)
             embed.set_footer(text=f"Checked by {interaction.user.name}")
             
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                
         except Exception as e:
             logging.error(f"Error checking user: {e}")
-            await interaction.response.send_message("❌ An error occurred while checking the user.", ephemeral=True) 
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while checking the user.", ephemeral=True)
+            except Exception as response_error:
+                logging.error(f"Error sending error response: {response_error}") 

@@ -19,6 +19,7 @@ class Welcome(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.role_assignment_task = None
+        self.cooldown_cleanup_task = None
         self.logged_members = set()  # Track members that have been logged
         self.load_logged_members()
 
@@ -61,6 +62,9 @@ class Welcome(commands.Cog):
             
             # Start role assignment loop
             self.role_assignment_task = self.bot.loop.create_task(self.role_assignment_loop())
+            
+            # Start cooldown cleanup loop
+            self.cooldown_cleanup_task = self.bot.loop.create_task(self.cleanup_cooldowns_loop())
             
             # Sync user data with actual Discord roles to prevent incorrect assignments
             await self.sync_user_data_with_roles()
@@ -196,6 +200,53 @@ class Welcome(commands.Cog):
                 logging.error(f"Error in role assignment loop: {e}")
                 await asyncio.sleep(60)  # Wait longer on error
 
+    async def cleanup_cooldowns_loop(self):
+        """Background task to clean up expired button cooldowns"""
+        while True:
+            try:
+                await self.cleanup_expired_cooldowns()
+                await asyncio.sleep(300)  # Check every 5 minutes
+            except Exception as e:
+                logging.error(f"Error in cooldown cleanup loop: {e}")
+                await asyncio.sleep(600)  # Wait longer on error
+
+    async def cleanup_expired_cooldowns(self):
+        """Clean up expired button cooldowns from file"""
+        try:
+            from .verification import COOLDOWN_FILE, RATE_LIMIT_SECONDS
+            import time
+            
+            try:
+                with open(COOLDOWN_FILE, 'r') as f:
+                    cooldowns = json.load(f)
+            except FileNotFoundError:
+                return
+            except Exception as e:
+                logging.error(f"Error reading cooldown file: {e}")
+                return
+            
+            current_time = time.time()
+            expired_users = []
+            
+            for user_id, last_click in cooldowns.items():
+                if current_time - last_click >= RATE_LIMIT_SECONDS:
+                    expired_users.append(user_id)
+            
+            # Remove expired cooldowns
+            for user_id in expired_users:
+                del cooldowns[user_id]
+            
+            if expired_users:
+                try:
+                    with open(COOLDOWN_FILE, 'w') as f:
+                        json.dump(cooldowns, f, indent=2)
+                    logging.info(f"Cleaned up {len(expired_users)} expired button cooldowns")
+                except Exception as e:
+                    logging.error(f"Error saving cleaned cooldowns: {e}")
+                    
+        except Exception as e:
+            logging.error(f"Error in cleanup_expired_cooldowns: {e}")
+
     async def check_and_assign_roles(self):
         """Check if any users need role assignment"""
         try:
@@ -228,13 +279,26 @@ class Welcome(commands.Cog):
                     logging.info(f"User {user_id} left the server, will remove from data")
                     continue
                 
-                # Only assign member role if user clicked the button
+                # Only assign member role if user clicked the button and doesn't already have it
                 button_clicked_at = data.get('button_clicked_at', 0)
                 if button_clicked_at and not data.get('has_access', False) and not data.get('role_assigned', False):
                     if current_time - button_clicked_at >= delay_seconds:
-                        await self.assign_member_role(user_id)
-                        # Remove unverified role when they get member role
-                        await self.remove_unverified_role(user_id)
+                        # Check if user actually has member role before assigning
+                        member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
+                        if member_role_id:
+                            guild = self.bot.get_guild(guild_id)
+                            if guild:
+                                member_role = guild.get_role(member_role_id)
+                                if member_role and member_role not in member.roles:
+                                    await self.assign_member_role(user_id)
+                                    # Remove unverified role when they get member role
+                                    await self.remove_unverified_role(user_id)
+                                else:
+                                    # User already has member role, just update data
+                                    data['has_access'] = True
+                                    data['role_assigned'] = True
+                                    user_data[user_id_str] = data
+                                    logging.info(f"User {user_id} already has member role, updated data")
             
             # Remove users who left the server
             for user_id_str in users_to_remove:
@@ -248,6 +312,12 @@ class Welcome(commands.Cog):
                     
         except Exception as e:
             logging.error(f"Error checking role assignments: {e}")
+            
+            # Report critical error to owners
+            try:
+                await self.report_critical_error("Role Assignment Error", f"Error in role assignment loop: {e}")
+            except Exception as report_error:
+                logging.error(f"Failed to report critical error: {report_error}")
 
     async def assign_member_role(self, user_id):
         """Assign member role to user"""
@@ -334,6 +404,12 @@ class Welcome(commands.Cog):
             
         except Exception as e:
             logging.error(f"Error assigning member role to {user_id}: {e}")
+            
+            # Report critical error to owners
+            try:
+                await self.report_critical_error("Member Role Assignment Error", f"Failed to assign member role to user {user_id}: {e}")
+            except Exception as report_error:
+                logging.error(f"Failed to report critical error: {report_error}")
 
     async def remove_unverified_role(self, user_id):
         """Remove unverified role from user"""
@@ -481,6 +557,22 @@ class Welcome(commands.Cog):
             
         except Exception as e:
             logging.error(f"Error syncing user data with roles: {e}")
+
+    async def report_critical_error(self, error_type, error_message):
+        """Report critical errors to owners via logs and DM"""
+        try:
+            # Import the error reporting function
+            from .verification import report_critical_error
+            await report_critical_error(error_type, error_message, self.bot)
+        except Exception as e:
+            logging.error(f"Error in welcome cog error reporting: {e}")
+
+    def cog_unload(self):
+        """Clean up when cog is unloaded"""
+        if self.role_assignment_task:
+            self.role_assignment_task.cancel()
+        if self.cooldown_cleanup_task:
+            self.cooldown_cleanup_task.cancel()
 
 async def setup(bot):
     await bot.add_cog(Welcome(bot))

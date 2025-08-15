@@ -10,20 +10,27 @@ async def setup(bot):
     @discord.app_commands.default_permissions(administrator=True)
     async def fix_user_roles(interaction: discord.Interaction, user: discord.Member):
         """Fix user roles and status (admin only)"""
-        # SECURITY: Check authorization
-        from main import is_authorized_guild_or_owner
-        if not is_authorized_guild_or_owner(interaction):
-            return await interaction.response.send_message(
-                "❌ You are not authorized to use this command.", ephemeral=True
-            )
-        
-        # SECURITY: Block DMs and check admin permissions
-        if not interaction.guild:
-            return await interaction.response.send_message("❌ This command can only be used in a server!", ephemeral=True)
-        if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
-        
         try:
+            # SECURITY: Check authorization
+            from main import is_authorized_guild_or_owner
+            if not is_authorized_guild_or_owner(interaction):
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ You are not authorized to use this command.", ephemeral=True
+                    )
+                return
+            
+            # SECURITY: Block DMs and check admin permissions
+            if not interaction.guild:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ This command can only be used in a server!", ephemeral=True)
+                return
+            
+            if not isinstance(interaction.user, discord.Member) or not interaction.user.guild_permissions.administrator:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ You need Administrator permissions!", ephemeral=True)
+                return
+            
             member_role_id = int(os.getenv('MEMBER_ROLE_ID', 0))
             unverified_role_id = int(os.getenv('UNVERIFIED_ROLE_ID', 0))
             
@@ -69,7 +76,35 @@ async def setup(bot):
                             actions_taken.append("🔓 Removed unverified role")
                             has_unverified_role = False
             
-            # Update user data
+            # Clear button cooldown if user has been waiting too long
+            try:
+                from cogs.verification import COOLDOWN_FILE, RATE_LIMIT_SECONDS
+                import time
+                
+                try:
+                    with open(COOLDOWN_FILE, 'r') as f:
+                        cooldowns = json.load(f)
+                    
+                    user_id_str = str(user.id)
+                    if user_id_str in cooldowns:
+                        last_click = cooldowns[user_id_str]
+                        current_time = time.time()
+                        time_since_click = current_time - last_click
+                        
+                        # If cooldown is expired or user has been waiting more than 5 minutes, clear it
+                        if time_since_click >= RATE_LIMIT_SECONDS or time_since_click > 300:
+                            del cooldowns[user_id_str]
+                            with open(COOLDOWN_FILE, 'w') as f:
+                                json.dump(cooldowns, f, indent=2)
+                            actions_taken.append("⏰ Cleared button cooldown")
+                except FileNotFoundError:
+                    pass  # No cooldown file, nothing to clear
+                except Exception as e:
+                    logging.error(f"Error clearing cooldown: {e}")
+            except ImportError:
+                pass  # Module not available
+            
+            # Update user data (preserve existing data)
             user_data[str(user.id)] = {
                 'joined_at': user_info.get('joined_at', 0),
                 'has_access': has_member_role,
@@ -126,8 +161,22 @@ async def setup(bot):
             embed.set_thumbnail(url=user.display_avatar.url)
             embed.set_footer(text=f"Fixed by {interaction.user.name}")
             
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                
         except Exception as e:
             logging.error(f"Error fixing user roles: {e}")
-            await interaction.response.send_message("❌ An error occurred while fixing user roles.", ephemeral=True) 
+            
+            # Report critical error to owners
+            try:
+                from cogs.verification import report_critical_error
+                bot = interaction.client if hasattr(interaction, 'client') else None
+                await report_critical_error("Fix User Roles Error", f"Error in fix_user_roles command: {e}", bot, interaction)
+            except Exception as report_error:
+                logging.error(f"Failed to report critical error: {report_error}")
+            
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("❌ An error occurred while fixing user roles.", ephemeral=True)
+            except Exception as response_error:
+                logging.error(f"Error sending error response: {response_error}") 

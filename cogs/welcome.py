@@ -8,6 +8,7 @@ import os
 import json
 from datetime import datetime, timezone
 from .verification import VerificationView
+import time
 
 # Import the function from main.py to avoid duplication
 from main import get_or_create_welcome_message
@@ -21,6 +22,7 @@ class Welcome(commands.Cog):
         self.role_assignment_task = None
         self.cooldown_cleanup_task = None
         self.logged_members = set()  # Track members that have been logged
+        self.member_join_timestamps = {}  # Track when each member was last processed
         self.load_logged_members()
 
     @commands.Cog.listener()
@@ -54,7 +56,7 @@ class Welcome(commands.Cog):
                 ),
                 color=0xFFFFFF
             )
-            embed.set_footer(text="Book Your Onboarding Call Today!")
+            embed.set_footer(text="Book Your Onboarding Call Today!")
             embed.set_thumbnail(url="https://cdn.discordapp.com/attachments/1370122090631532655/1401222798336200834/20.38.48_73b12891.jpg")
             # Use persistent message logic
             msg = await get_or_create_welcome_message(welcome_channel, embed, VerificationView())
@@ -65,6 +67,9 @@ class Welcome(commands.Cog):
             
             # Start cooldown cleanup loop
             self.cooldown_cleanup_task = self.bot.loop.create_task(self.cleanup_cooldowns_loop())
+            
+            # Start logged members cleanup loop
+            self.logged_members_cleanup_task = self.bot.loop.create_task(self.cleanup_logged_members_loop())
             
             # Sync user data with actual Discord roles to prevent incorrect assignments
             await self.sync_user_data_with_roles()
@@ -87,14 +92,29 @@ class Welcome(commands.Cog):
             if guild.id != guild_id:
                 return
             
-            # Check if this member has already been logged (duplicate prevention)
-            if member.id in self.logged_members:
-                logging.info(f"Duplicate member join event for {member.display_name} ({member.id}) - skipping log")
+            # Enhanced duplicate prevention with timestamp tracking
+            current_time = time.time()
+            user_id = str(member.id)
+            
+            # Check if this member was processed recently (within 30 seconds)
+            last_processed = self.member_join_timestamps.get(user_id, 0)
+            if current_time - last_processed < 30:
+                logging.info(f"Duplicate member join event for {member.display_name} ({member.id}) - skipping log (processed {current_time - last_processed:.1f}s ago)")
+                return
+            
+            # Update timestamp immediately to prevent duplicates
+            self.member_join_timestamps[user_id] = current_time
+            
+            # Check if this member has already been logged (additional safety)
+            if user_id in self.logged_members:
+                logging.info(f"Member {member.display_name} ({member.id}) already in logged_members - skipping log")
                 return
             
             # Mark as logged immediately to prevent duplicates
-            self.logged_members.add(member.id)
+            self.logged_members.add(user_id)
             self.save_logged_members()
+            
+            logging.info(f"Processing member join for {member.display_name} ({member.id})")
             
             # Get the unverified role
             unverified_role = guild.get_role(unverified_role_id)
@@ -135,21 +155,24 @@ class Welcome(commands.Cog):
                     
                     try:
                         await logs_channel.send(embed=embed)
+                        logging.info(f"Successfully logged member join for {member.display_name} ({member.id})")
                     except discord.Forbidden:
                         logging.warning(f"Bot doesn't have permission to send messages to logs channel {logs_channel_id}")
                     except Exception as e:
                         logging.error(f"Error sending log message: {e}")
-                    
-                    logging.info(f"Logged member join for {member.display_name} ({member.id})")
             
             # Record user data for role assignment
             try:
-                with open(USER_DATA_FILE, 'r') as f:
-                    user_data = json.load(f)
-            except FileNotFoundError:
-                user_data = {}
+                from utils import safe_json_read, safe_json_write
+                user_data = safe_json_read(USER_DATA_FILE, {})
+            except ImportError:
+                # Fallback to direct file operations
+                try:
+                    with open(USER_DATA_FILE, 'r') as f:
+                        user_data = json.load(f)
+                except FileNotFoundError:
+                    user_data = {}
             
-            user_id = str(member.id)
             current_time = datetime.now(timezone.utc).timestamp()
             
             user_data[user_id] = {
@@ -160,13 +183,19 @@ class Welcome(commands.Cog):
                 'button_clicked_at': 0  # Reset button click when they rejoin
             }
             
-            with open(USER_DATA_FILE, 'w') as f:
-                json.dump(user_data, f, indent=2)
+            try:
+                from utils import safe_json_write
+                safe_json_write(USER_DATA_FILE, user_data)
+            except ImportError:
+                # Fallback to direct file operations
+                with open(USER_DATA_FILE, 'w') as f:
+                    json.dump(user_data, f, indent=2)
                 
         except Exception as e:
             logging.error(f"Error handling member join for {member.id}: {e}")
             # Remove from logged_members if there was an error
-            self.logged_members.discard(member.id)
+            self.logged_members.discard(str(member.id))
+            self.save_logged_members()
 
     def load_logged_members(self):
         """Load logged members from file"""
@@ -175,6 +204,19 @@ class Welcome(commands.Cog):
                 data = json.load(f)
                 self.logged_members = set(data.get('logged_members', []))
                 logging.info(f"Loaded {len(self.logged_members)} logged members")
+                
+                # Clean up old entries (keep only recent ones, older than 1 hour)
+                current_time = time.time()
+                cleaned_members = set()
+                for member_id in self.logged_members:
+                    # For now, just keep all entries but we could add timestamp tracking later
+                    cleaned_members.add(member_id)
+                
+                if len(cleaned_members) != len(self.logged_members):
+                    self.logged_members = cleaned_members
+                    self.save_logged_members()
+                    logging.info(f"Cleaned up logged members: {len(self.logged_members)} remaining")
+                    
         except FileNotFoundError:
             self.logged_members = set()
             logging.info("No logged members file found, starting fresh")
@@ -246,15 +288,20 @@ class Welcome(commands.Cog):
                     
         except Exception as e:
             logging.error(f"Error in cleanup_expired_cooldowns: {e}")
+            
+            # Report critical error to owners
+            try:
+                await self.report_critical_error("Cooldown Cleanup Error", f"Error in cleanup_expired_cooldowns: {e}")
+            except Exception as report_error:
+                logging.error(f"Failed to report critical error: {report_error}")
 
     async def check_and_assign_roles(self):
         """Check if any users need role assignment"""
         try:
             # Load user data
-            try:
-                with open(USER_DATA_FILE, 'r') as f:
-                    user_data = json.load(f)
-            except FileNotFoundError:
+            from utils import safe_json_read
+            user_data = safe_json_read(USER_DATA_FILE, {})
+            if not user_data:
                 return
             
             current_time = datetime.now(timezone.utc).timestamp()
@@ -307,8 +354,8 @@ class Welcome(commands.Cog):
             
             # Save updated data if any users were removed
             if users_to_remove:
-                with open(USER_DATA_FILE, 'w') as f:
-                    json.dump(user_data, f, indent=2)
+                from utils import safe_json_write
+                safe_json_write(USER_DATA_FILE, user_data)
                     
         except Exception as e:
             logging.error(f"Error checking role assignments: {e}")
@@ -348,11 +395,8 @@ class Welcome(commands.Cog):
             if role in member.roles:
                 logging.info(f"User {user_id} already has member role")
                 # Update user data to reflect they already have the role
-                try:
-                    with open(USER_DATA_FILE, 'r') as f:
-                        user_data = json.load(f)
-                except FileNotFoundError:
-                    user_data = {}
+                from utils import safe_json_read
+                user_data = safe_json_read(USER_DATA_FILE, {})
                 
                 user_id_str = str(user_id)
                 if user_id_str in user_data:
@@ -567,12 +611,50 @@ class Welcome(commands.Cog):
         except Exception as e:
             logging.error(f"Error in welcome cog error reporting: {e}")
 
+    async def cleanup_logged_members_loop(self):
+        """Background task to clean up old logged members"""
+        while True:
+            try:
+                await self.cleanup_old_logged_members()
+                await asyncio.sleep(3600)  # Check every hour
+            except Exception as e:
+                logging.error(f"Error in logged members cleanup loop: {e}")
+                await asyncio.sleep(7200)  # Wait longer on error
+
+    async def cleanup_old_logged_members(self):
+        """Clean up old logged members (older than 24 hours)"""
+        try:
+            current_time = time.time()
+            
+            # Clean up old timestamps (older than 1 hour)
+            old_timestamps = []
+            for user_id, timestamp in self.member_join_timestamps.items():
+                if current_time - timestamp > 3600:  # 1 hour
+                    old_timestamps.append(user_id)
+            
+            for user_id in old_timestamps:
+                del self.member_join_timestamps[user_id]
+            
+            if old_timestamps:
+                logging.info(f"Cleaned up {len(old_timestamps)} old member join timestamps")
+            
+            # For logged_members, clear if too many entries
+            if len(self.logged_members) > 1000:  # If we have more than 1000 logged members
+                self.logged_members.clear()
+                self.save_logged_members()
+                logging.info("Cleared logged members set (too many entries)")
+                
+        except Exception as e:
+            logging.error(f"Error cleaning up old logged members: {e}")
+
     def cog_unload(self):
         """Clean up when cog is unloaded"""
         if self.role_assignment_task:
             self.role_assignment_task.cancel()
         if self.cooldown_cleanup_task:
             self.cooldown_cleanup_task.cancel()
+        if hasattr(self, 'logged_members_cleanup_task') and self.logged_members_cleanup_task:
+            self.logged_members_cleanup_task.cancel()
 
 async def setup(bot):
     await bot.add_cog(Welcome(bot))
